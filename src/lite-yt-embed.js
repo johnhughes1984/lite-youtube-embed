@@ -18,22 +18,20 @@ class LiteYTEmbed extends HTMLElement {
         // A label for the button takes priority over a [playlabel] attribute on the custom-element
         this.playLabel = (playBtnEl && playBtnEl.textContent.trim()) || this.getAttribute('playlabel') || 'Play';
 
-        /**
-         * Lo, the youtube placeholder image!  (aka the thumbnail, poster image, etc)
-         *
-         * See https://github.com/paulirish/lite-youtube-embed/blob/master/youtube-thumbnail-urls.md
-         *
-         * TODO: Do the sddefault->hqdefault fallback
-         *       - When doing this, apply referrerpolicy (https://github.com/ampproject/amphtml/pull/3940)
-         * TODO: Consider using webp if supported, falling back to jpg
-         */
-        if (!this.style.backgroundImage) {
-          this.posterUrl = `https://i.ytimg.com/vi/${this.videoId}/hqdefault.jpg`;
-          // Warm the connection for the poster image
-          LiteYTEmbed.addPrefetch('preload', this.posterUrl, 'image');
-
-          this.style.backgroundImage = `url("${this.posterUrl}")`;
+        // Find and validate image quality setting
+        this.quality = this.getAttribute('quality');
+        const qualityValueAllowed = ['hqdefault', 'sddefault', 'maxresdefault'].includes(this.quality);
+        if (!qualityValueAllowed) {
+            this.quality = 'hqdefault';
         }
+
+        // Look for custom image and encode if exists
+        const imageAttr = this.getAttribute('image');
+        this.image = imageAttr ? encodeURI(imageAttr) : null;
+
+        // Determine whether to lazily load background image
+        this.lazy = this.getAttribute('lazy') !== 'false';
+        this.lazy ? this.lazyLoadBackgroundImage() : this.addBackgroundImage();
 
         // Set up play button, and its visually hidden label
         if (!playBtnEl) {
@@ -97,6 +95,58 @@ class LiteYTEmbed extends HTMLElement {
         LiteYTEmbed.addPrefetch('preconnect', 'https://static.doubleclick.net');
 
         LiteYTEmbed.preconnected = true;
+    }
+
+    /**
+     * Check if browser supports WebP images
+     */
+    static hasWebP() {
+        let elem = document.createElement('canvas');
+
+        if (elem.getContext && elem.getContext('2d')) {
+            return elem.toDataURL('image/webp').indexOf('data:image/webp') === 0;
+        }
+        return false;
+    }
+
+    /**
+     * Lo, the youtube placeholder image!  (aka the thumbnail, poster image, etc)
+     *
+     * With custom image and WebP support
+     *
+     * See https://github.com/paulirish/lite-youtube-embed/blob/master/youtube-thumbnail-urls.md
+     */
+    addBackgroundImage() {
+        let posterUrl = this.image;
+        if (!posterUrl) {
+            if(LiteYTEmbed.hasWebP()) {
+                posterUrl = `https://i.ytimg.com/vi_webp/${this.videoId}/${this.quality}.webp`;
+            } else {
+                posterUrl = `https://i.ytimg.com/vi/${this.videoId}/${this.quality}.jpg`;
+            }
+        }
+
+        // Warm the connection for the poster image
+        LiteYTEmbed.addPrefetch('preload', posterUrl, 'image');
+
+        this.style.backgroundImage = `url("${posterUrl}")`;
+    }
+
+    /**
+     * Don't load/set background image until element in viewport
+     */
+    lazyLoadBackgroundImage() {
+        const liteYtEl = this;
+
+        const lazyBackgroundObserver = new IntersectionObserver(function(entries, observer) {
+            entries.forEach(function(entry) {
+                if (entry.isIntersecting) {
+                    liteYtEl.addBackgroundImage();
+                    lazyBackgroundObserver.unobserve(entry.target);
+                }
+            });
+        });
+        lazyBackgroundObserver.observe(this);
     }
 
     addIframe() {
